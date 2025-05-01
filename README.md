@@ -17,5 +17,4 @@ This project implements a Long Short-Term Memory (LSTM) neural network to perfor
 
 ---
 
-git clone https://github.com/DevikasaBabuair-passengers-lstm.git
-cd air-passengers-lstm
+
