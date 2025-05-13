@@ -1,0 +1,118 @@
+pip install ultralytics opencv-python torch torchvision matplotlib
+pip install kagglehub
+import kagglehub
+
+# Download latest version
+path = kagglehub.dataset_download("ammarnassanalhajali/pklot-dataset")
+
+print("Path to dataset files:", path)
+import os
+import cv2
+import numpy as np
+import torch
+from ultralytics import YOLO
+import matplotlib.pyplot as plt
+from torchvision.models.detection import maskrcnn_resnet50_fpn
+from torchvision.transforms import functional as F
+from PIL import Image
+import kagglehub
+
+# Step 1: Download the dataset using kagglehub
+dataset_path = kagglehub.dataset_download("ammarnassanalhajali/pklot-dataset")
+print("Path to dataset files:", dataset_path)
+
+# Find a sample image from dataset
+def find_sample_image(root_path):
+    for root, dirs, files in os.walk(root_path):
+        for file in files:
+            if file.endswith((".jpg", ".png", ".jpeg")):
+                return os.path.join(root, file)
+    return None
+
+sample_image_path = find_sample_image(dataset_path)
+if sample_image_path is None:
+    raise FileNotFoundError("No image file found in the downloaded dataset.")
+
+# Step 2: Load YOLOv8 model
+yolo_model = YOLO('yolov8n.pt')  # Ensure this file exists or download the weights
+
+# Step 3: Load Mask-RCNN model
+maskrcnn = maskrcnn_resnet50_fpn(pretrained=True)
+maskrcnn.eval()
+
+# Step 4: Device
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+maskrcnn.to(device)
+
+# Function to get parking slot masks
+def get_parking_slot_masks(image):
+    image_tensor = F.to_tensor(image).to(device)
+    with torch.no_grad():
+        prediction = maskrcnn([image_tensor])[0]
+
+    masks = prediction['masks']
+    scores = prediction['scores']
+
+    threshold = 0.8
+    slot_masks = []
+
+    for i in range(len(masks)):
+        if scores[i] > threshold:
+            slot_masks.append(masks[i][0].cpu().numpy())
+
+    return slot_masks
+
+# Function to detect vehicles using YOLOv8
+def detect_vehicles(image_path):
+    results = yolo_model(image_path)
+    return results[0].boxes.xyxy.cpu().numpy()
+
+# Function to check intersection
+def is_occupied(slot_mask, vehicle_boxes):
+    for box in vehicle_boxes:
+        x1, y1, x2, y2 = map(int, box)
+        car_mask = np.zeros(slot_mask.shape, dtype=np.uint8)
+        car_mask[y1:y2, x1:x2] = 1
+        overlap = np.logical_and(car_mask, slot_mask)
+        if np.sum(overlap) > 200:
+            return True
+    return False
+
+# Main processing
+def process_image(image_path):
+    image = Image.open(image_path).convert("RGB")
+    slot_masks = get_parking_slot_masks(image)
+    vehicle_boxes = detect_vehicles(image_path)
+    img = np.array(image)
+
+    for mask in slot_masks:
+        contours, _ = cv2.findContours((mask * 255).astype(np.uint8), cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+        color = (0, 255, 0)  # green by default
+        if is_occupied(mask, vehicle_boxes):
+            color = (0, 0, 255)  # red if occupied
+        for cnt in contours:
+            cv2.drawContours(img, [cnt], -1, color, 2)
+
+    for box in vehicle_boxes:
+        x1, y1, x2, y2 = map(int, box)
+        cv2.rectangle(img, (x1, y1), (x2, y2), (255, 255, 0), 2)
+
+        from google.colab.patches import cv2_imshow
+    cv2_imshow(img)
+
+
+# Run
+if __name__ == '__main__':
+    print("Processing image:", sample_image_path)
+    process_image(sample_image_path)
+image_paths = []
+for root, dirs, files in os.walk(dataset_path):
+    for file in files:
+        if file.endswith(".jpg"):
+            image_paths.append(os.path.join(root, file))
+
+# Predict on first 5 images
+for path in image_paths[:5]:
+    print("Processing:", path)
+    process_image(path)
+
